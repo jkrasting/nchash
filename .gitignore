@@ -1,0 +1,44 @@
+# Object files
+*.o
+
+# Libraries
+*.lib
+*.a
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Autotools generated files
+Makefile
+Makefile.in
+/aclocal.m4
+/autom4te.cache/
+/depcomp
+/compile
+/config.guess
+/config.h
+/config.h.in
+/config.log
+/config.status
+/config.sub
+/configure
+/install-sh
+/libtool
+/ltmain.sh
+/missing
+/stamp-h1
+.dep/
+.deps/
+.libs/
+
