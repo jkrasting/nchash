@@ -189,34 +189,60 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Print hash
-        unsigned char hash[SHA256_DIGEST_LENGTH];
+
+
+        // Calculate and print hash
+        
         switch (hash_algorithm) {
-            case '2':  // SHA256
+            case '2': { // SHA256
+                unsigned char hash[SHA256_DIGEST_LENGTH]; // Make this large enough for the largest possible hash
                 SHA256_Final(hash, &sha256);
+
+                if (color) {
+                    printf("\033[31m%s\033[0m: %s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
+                } else {
+                    printf("%s:%s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
+                }
+
+                for (int j = 0; j < SHA256_DIGEST_LENGTH; j++) {
+                    printf("%02x", hash[j]);
+                }
                 break;
-            case 'm':  // MD5
-                MD5_Final(hash, &md5);
-                break;
-            case 's':  // SHA1
+            }
+            case 's': { // SHA1
+                unsigned char hash[SHA_DIGEST_LENGTH]; // Make this large enough for the largest possible hash
                 SHA1_Final(hash, &sha1);
+
+                if (color) {
+                    printf("\033[31m%s\033[0m: %s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
+                } else {
+                    printf("%s:%s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
+                }
+
+                for (int j = 0; j < SHA_DIGEST_LENGTH; j++) {
+                    printf("%02x", hash[j]);
+                }
                 break;
-            default:
+            }
+            case 'm': { // MD5
+                unsigned char hash[MD5_DIGEST_LENGTH]; // Make this large enough for the largest possible hash
+                MD5_Final(hash, &md5);
+
+                if (color) {
+                    printf("\033[31m%s\033[0m: %s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
+                } else {
+                    printf("%s:%s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
+                }
+
+                for (int j = 0; j < MD5_DIGEST_LENGTH; j++) {
+                    printf("%02x", hash[j]);
+                }
+                break;
+            }
+            default: {
                 fprintf(stderr, "Invalid hash algorithm!\n");
                 exit(-1);
-        }
-
-        // Print filename, variable name, and hash
-        if (color) {
-            printf("\033[1;31m");
-        }
-        printf("%s:%s", base_filename, var_name);
-        if (color) {
-            printf("\033[0m");
-        }
-        printf("%*s", max_name_length + additional_spacing - strlen(base_filename) - strlen(var_name), "");
-        for (int j = 0; j < SHA256_DIGEST_LENGTH; j++) {
-            printf("%02x", hash[j]);
+            }
         }
         printf("\n");
     }
