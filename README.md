@@ -20,6 +20,6 @@ Note
 
 If you are using libraries from Anaconda, activate your environment and set the following:
 ```
-CPATH=${CONDA_PREFIX}/include
-LIBRARY_PATH=${CONDA_PREFIX}/lib
+export CPATH=${CONDA_PREFIX}/include
+export LIBRARY_PATH=${CONDA_PREFIX}/lib
 ```
