@@ -3,256 +3,281 @@
 #include <string.h>
 #include <libgen.h>
 #include <netcdf.h>
+#include <archive.h>
+#include <archive_entry.h>
+#include <openssl/evp.h>
 #include <openssl/sha.h>
 #include <openssl/md5.h>
 
-#define DEFAULT_SPACING 0
-#define DEFAULT_HASH_ALGORITHM '2'  // SHA256 by default
-#define HANDLE_ERR(e) {if(e!=NC_NOERR){printf("Error: %s\n", nc_strerror(e)); exit(2);}}
-#define MAX_NAME_LEN 1024
+#define RED "\033[31m"
+#define RESET "\033[0m"
 
-// Function to handle errors
-void handle_err(int status, int line) {
-    if (status != NC_NOERR) {
-        fprintf(stderr, "line %d: %s\n", line, nc_strerror(status));
-        exit(-1);
+int nc_open_mem(const char *path, int mode, size_t size, void *memory, int *ncidp);
+
+size_t nc_type_size(nc_type type) {
+    switch (type) {
+        case NC_BYTE: return sizeof(signed char);
+        case NC_CHAR: return sizeof(char);
+        case NC_SHORT: return sizeof(short);
+        case NC_INT: return sizeof(int);
+        case NC_FLOAT: return sizeof(float);
+        case NC_DOUBLE: return sizeof(double);
+        default: return 0;
     }
 }
 
-void update_hash(char hash_algorithm, void* data, size_t data_len, SHA256_CTX* sha256, SHA_CTX* sha1, MD5_CTX* md5) {
-    switch (hash_algorithm) {
-        case '2':  // SHA256
-            SHA256_Update(sha256, data, data_len);
-            break;
-        case 'm':  // MD5
-            MD5_Update(md5, data, data_len);
-            break;
-        case 's':  // SHA1
-            SHA1_Update(sha1, data, data_len);
+void hash_data(int ncid, int varid, const EVP_MD *md) {
+    nc_type type;
+    size_t total = 1;
+    int dim;
+    int ndims;
+    int dims[NC_MAX_VAR_DIMS];
+
+    nc_inq_varndims(ncid, varid, &ndims);
+    nc_inq_vardimid(ncid, varid, dims);
+    for (dim = 0; dim < ndims; dim++) {
+        size_t len;
+        nc_inq_dimlen(ncid, dims[dim], &len);
+        total *= len;
+    }
+
+    nc_inq_vartype(ncid, varid, &type);
+    switch (type) {
+        case NC_BYTE:
+        case NC_CHAR:
+        case NC_SHORT:
+        case NC_INT:
+        case NC_FLOAT:
+        case NC_DOUBLE:
+            {
+                void *data = malloc(nc_type_size(type) * total);
+                nc_get_var(ncid, varid, data);
+
+                EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+                EVP_DigestInit_ex(ctx, md, NULL);
+                EVP_DigestUpdate(ctx, data, nc_type_size(type) * total);
+
+                unsigned char digest[EVP_MAX_MD_SIZE];
+                unsigned int digest_len;
+                EVP_DigestFinal_ex(ctx, digest, &digest_len);
+
+                for (unsigned int i = 0; i < digest_len; i++) {
+                    printf("%02x", digest[i]);
+                }
+
+                printf("\n");
+                free(data);
+                EVP_MD_CTX_free(ctx);
+            }
             break;
         default:
-            fprintf(stderr, "Invalid hash algorithm!\n");
-            exit(-1);
+            fprintf(stderr, "Unsupported data type\n");
     }
 }
 
-int main(int argc, char** argv) {
-    int nc_status;  // Status for NetCDF operations
-    int nc_file;  // NetCDF file id
-    int n_vars;  // Number of variables in the file
-    char hash_algorithm = DEFAULT_HASH_ALGORITHM;  // Hash algorithm ('2' for SHA256, 'm' for MD5, 's' for SHA1)
-    int additional_spacing = DEFAULT_SPACING;  // Additional spacing between variable names and hashes
-    int color = 0;  // Whether to colorize the output
-    char* filename;  // Name of the file to process
-    char* filename_copy;  // Copy of filename for use with basename()
-    char* base_filename;  // Basename of the file to process
-    int max_name_length = 0;  // Maximum length of a variable name
+void handle_ncfile(int ncid, const char *filename, int color_flag, const EVP_MD *md) {
+    char varname[NC_MAX_NAME + 1];
+    int varid;
 
-    // Parse command line options
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--color") == 0 || strcmp(argv[i], "-c") == 0) {
-            color = 1;
-        } else if (strcmp(argv[i], "--hash") == 0 || strcmp(argv[i], "-a") == 0) {
-            i++;
-            if (i < argc) {
-                hash_algorithm = argv[i][0];
-            } else {
-                fprintf(stderr, "Missing argument for --hash\n");
-                exit(-1);
-            }
-        } else if (strcmp(argv[i], "--spacing") == 0 || strcmp(argv[i], "-s") == 0) {
-            i++;
-            if (i < argc) {
-                additional_spacing = atoi(argv[i]);
-            } else {
-                fprintf(stderr, "Missing argument for --spacing\n");
-                exit(-1);
-            }
+    for (varid = 0; varid < NC_MAX_VARS; varid++) {
+        if (nc_inq_varname(ncid, varid, varname) != NC_NOERR) {
+            break;
+        }
+        if (color_flag == 1) {
+            printf(RED "%s" RESET " : %s  ", basename(filename), varname);
         } else {
-            filename = argv[i];
-            filename_copy = strdup(filename);
-            base_filename = basename(filename_copy);
+            printf("%s %s: ", basename(filename), varname);
         }
+        hash_data(ncid, varid, md);
+    }
+}
+
+void handle_entry(struct archive *a, struct archive_entry *entry, int color_flag, const EVP_MD *md) {
+    const char *filename = archive_entry_pathname(entry);
+    const void *buf;
+    size_t size;
+    off_t offset;
+
+    if (archive_read_data_block(a, &buf, &size, &offset) != ARCHIVE_OK) {
+        fprintf(stderr, "Failed to read entry data: %s\n", filename);
+        return;
     }
 
-    // Open the file
-    nc_status = nc_open(filename, NC_NOWRITE, &nc_file);
-    handle_err(nc_status, __LINE__);
-
-    // Get the number of variables
-    nc_status = nc_inq_nvars(nc_file, &n_vars);
-    handle_err(nc_status, __LINE__);
-
-    // Initialize hashing contexts
-    SHA256_CTX sha256;
-    SHA_CTX sha1;
-    MD5_CTX md5;
-    SHA256_Init(&sha256);
-    SHA1_Init(&sha1);
-    MD5_Init(&md5);
-
-    // Process each variable
-    for (int i = 0; i < n_vars; i++) {
-        // Get variable name
-        char var_name[MAX_NAME_LEN];
-        nc_status = nc_inq_varname(nc_file, i, var_name);
-        handle_err(nc_status, __LINE__);
-
-        // Update maximum name length
-        int name_length = strlen(base_filename) + strlen(var_name) + 2;  // Add 2 for ':' and ' '
-        if (name_length > max_name_length) {
-            max_name_length = name_length;
+    int ncid;
+    if (nc_open_mem(filename, NC_NOWRITE, size, buf, &ncid) == NC_NOERR) {
+        char *base = basename((char *)filename);
+        if (color_flag == 1) {
+            printf(RED "%s" RESET "\n", base);
+        } else {
+            printf("%s\n", base);
+        }
+        handle_ncfile(ncid, filename, color_flag, md);
+        if (nc_close(ncid) != NC_NOERR) {
+            fprintf(stderr, "Failed to close file: %s\n", filename);
         }
     }
+}
 
-    for (int i = 0; i < n_vars; i++) {
-        // Get variable name
-        char var_name[MAX_NAME_LEN];
-        nc_status = nc_inq_varname(nc_file, i, var_name);
-        handle_err(nc_status, __LINE__);
+void handle_file(int ncid, const char *filename, int color_flag, const EVP_MD *md) {
+    int nvars;
+    if (nc_inq_nvars(ncid, &nvars) != NC_NOERR) {
+        fprintf(stderr, "Failed to get number of variables: %s\n", filename);
+        return;
+    }
 
-        // Get variable type
-        nc_type var_type;
-        nc_status = nc_inq_vartype(nc_file, i, &var_type);
-        handle_err(nc_status, __LINE__);
-
-        // Get total length of variable data
-        int n_dims;
-        nc_status = nc_inq_varndims(nc_file, i, &n_dims);
-        handle_err(nc_status, __LINE__);
-
-        int dim_ids[NC_MAX_VAR_DIMS];
-        nc_status = nc_inq_vardimid(nc_file, i, dim_ids);
-        handle_err(nc_status, __LINE__);
-
-        size_t length = 1;
-        for (int j = 0; j < n_dims; j++) {
-            size_t dim_length;
-            nc_status = nc_inq_dimlen(nc_file, dim_ids[j], &dim_length);
-            handle_err(nc_status, __LINE__);
-
-            length *= dim_length;
+    for (int i = 0; i < nvars; ++i) {
+        char varname[NC_MAX_NAME + 1];
+        nc_type type;
+        int ndims;
+        if (nc_inq_var(ncid, i, varname, &type, &ndims, NULL, NULL) != NC_NOERR) {
+            fprintf(stderr, "Failed to inquire variable: %s\n", filename);
+            continue;
         }
 
-        switch (var_type) {
-            case NC_BYTE: {
-                signed char* data = malloc(length * sizeof(signed char));
-                nc_status = nc_get_var_schar(nc_file, i, data);
-                handle_err(nc_status, __LINE__);
-                update_hash(hash_algorithm, data, length * sizeof(signed char), &sha256, &sha1, &md5);
-                free(data);
-                break;
-            }
-            case NC_CHAR: {
-                char* data = malloc(length * sizeof(char));
-                nc_status = nc_get_var_text(nc_file, i, data);
-                handle_err(nc_status, __LINE__);
-                update_hash(hash_algorithm, data, length * sizeof(char), &sha256, &sha1, &md5);
-                free(data);
-                break;
-            }
-            case NC_SHORT: {
-                short* data = malloc(length * sizeof(short));
-                nc_status = nc_get_var_short(nc_file, i, data);
-                handle_err(nc_status, __LINE__);
-                update_hash(hash_algorithm, data, length * sizeof(short), &sha256, &sha1, &md5);
-                free(data);
-                break;
-            }
-            case NC_INT: {
-                int* data = malloc(length * sizeof(int));
-                nc_status = nc_get_var_int(nc_file, i, data);
-                handle_err(nc_status, __LINE__);
-                update_hash(hash_algorithm, data, length * sizeof(int), &sha256, &sha1, &md5);
-                free(data);
-                break;
-            }
-            case NC_FLOAT: {
-                float* data = malloc(length * sizeof(float));
-                nc_status = nc_get_var_float(nc_file, i, data);
-                handle_err(nc_status, __LINE__);
-                update_hash(hash_algorithm, data, length * sizeof(float), &sha256, &sha1, &md5);
-                free(data);
-                break;
-            }
-            case NC_DOUBLE: {
-                double* data = malloc(length * sizeof(double));
-                nc_status = nc_get_var_double(nc_file, i, data);
-                handle_err(nc_status, __LINE__);
-                update_hash(hash_algorithm, data, length * sizeof(double), &sha256, &sha1, &md5);
-                free(data);
-                break;
-            }
-            default: {
-                fprintf(stderr, "Unsupported variable type %d\n", var_type);
-                exit(-1);
-            }
+        size_t total = 1;
+        int dims[ndims];
+        if (nc_inq_vardimid(ncid, i, dims) != NC_NOERR) {
+            fprintf(stderr, "Failed to inquire variable dimensions: %s\n", filename);
+            continue;
         }
 
-
-
-        // Calculate and print hash
-        
-        switch (hash_algorithm) {
-            case '2': { // SHA256
-                unsigned char hash[SHA256_DIGEST_LENGTH]; // Make this large enough for the largest possible hash
-                SHA256_Final(hash, &sha256);
-
-                if (color) {
-                    printf("\033[31m%s\033[0m: %s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
-                } else {
-                    printf("%s:%s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
-                }
-
-                for (int j = 0; j < SHA256_DIGEST_LENGTH; j++) {
-                    printf("%02x", hash[j]);
-                }
+        for (int j = 0; j < ndims; ++j) {
+            size_t len;
+            if (nc_inq_dimlen(ncid, dims[j], &len) != NC_NOERR) {
+                fprintf(stderr, "Failed to inquire dimension length: %s\n", filename);
                 break;
             }
-            case 's': { // SHA1
-                unsigned char hash[SHA_DIGEST_LENGTH]; // Make this large enough for the largest possible hash
-                SHA1_Final(hash, &sha1);
+            total *= len;
+        }
 
-                if (color) {
-                    printf("\033[31m%s\033[0m: %s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
-                } else {
-                    printf("%s:%s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
-                }
+        void *data = malloc(nc_type_size(type) * total);
+        if (!data) {
+            fprintf(stderr, "Failed to allocate memory for data: %s\n", filename);
+            continue;
+        }
 
-                for (int j = 0; j < SHA_DIGEST_LENGTH; j++) {
-                    printf("%02x", hash[j]);
-                }
-                break;
-            }
-            case 'm': { // MD5
-                unsigned char hash[MD5_DIGEST_LENGTH]; // Make this large enough for the largest possible hash
-                MD5_Final(hash, &md5);
+        if (nc_get_var(ncid, i, data) != NC_NOERR) {
+            fprintf(stderr, "Failed to get variable data: %s\n", filename);
+            free(data);
+            continue;
+        }
 
-                if (color) {
-                    printf("\033[31m%s\033[0m: %s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
-                } else {
-                    printf("%s:%s%*s ", base_filename, var_name, additional_spacing + max_name_length - strlen(base_filename) - strlen(var_name), "");
-                }
+        EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
+        EVP_DigestInit_ex(mdctx, md, NULL);
+        EVP_DigestUpdate(mdctx, data, nc_type_size(type) * total);
+        unsigned char hash[EVP_MAX_MD_SIZE];
+        unsigned int hash_len;
+        EVP_DigestFinal_ex(mdctx, hash, &hash_len);
+        EVP_MD_CTX_free(mdctx);
 
-                for (int j = 0; j < MD5_DIGEST_LENGTH; j++) {
-                    printf("%02x", hash[j]);
-                }
-                break;
-            }
-            default: {
-                fprintf(stderr, "Invalid hash algorithm!\n");
-                exit(-1);
-            }
+        printf("  %s: ", varname);
+        for (unsigned int j = 0; j < hash_len; ++j) {
+            printf("%02x", hash[j]);
         }
         printf("\n");
+
+        free(data);
+    }
+}
+
+int handle_tar(const char *filename, int color_flag, const EVP_MD *md) {
+    struct archive *a;
+    struct archive_entry *entry;
+
+    a = archive_read_new();
+    archive_read_support_format_all(a);
+    archive_read_support_compression_all(a);
+
+    if (archive_read_open_filename(a, filename, 10240) != ARCHIVE_OK) {
+        fprintf(stderr, "Failed to open tar file: %s\n", filename);
+        archive_read_free(a);
+        return 1;
     }
 
-    // Close the file
-    nc_status = nc_close(nc_file);
-    handle_err(nc_status, __LINE__);
+    while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+        size_t total_size = archive_entry_size(entry);
+        void *buffer = malloc(total_size);
+        if (!buffer) {
+            fprintf(stderr, "Failed to allocate memory\n");
+            continue;
+        }
 
-    // Clean up
-    free(filename_copy);
+        size_t offset = 0;
+        const void *data;
+        size_t size;
+        off_t data_offset;
+
+        while (archive_read_data_block(a, &data, &size, &data_offset) == ARCHIVE_OK) {
+            memcpy((char *)buffer + offset, data, size);
+            offset += size;
+        }
+
+        int ncid;
+        if (nc_open_mem(archive_entry_pathname(entry), NC_NOWRITE, total_size, buffer, &ncid) == NC_NOERR) {
+            char *base = basename((char *)archive_entry_pathname(entry));
+            handle_ncfile(ncid, archive_entry_pathname(entry), color_flag, md);
+            if (nc_close(ncid) != NC_NOERR) {
+                fprintf(stderr, "Failed to close file: %s\n", archive_entry_pathname(entry));
+            }
+        }
+
+        free(buffer);
+        archive_read_data_skip(a);
+    }
+
+    archive_read_free(a);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    const char *filename = NULL;
+    int color_flag = 0;
+    const EVP_MD *md = EVP_sha256();
+
+    int opt;
+    while ((opt = getopt(argc, argv, "ch:")) != -1) {
+        switch (opt) {
+            case 'c':
+                fprintf(stderr, "Setting color mode\n");
+                color_flag = 1;
+                break;
+            case 'h':
+                if (strcmp(optarg, "sha256") == 0) {
+                    md = EVP_sha256();
+                } else if (strcmp(optarg, "sha1") == 0) {
+                    md = EVP_sha1();
+                } else if (strcmp(optarg, "md5") == 0) {
+                    md = EVP_md5();
+                } else {
+                    fprintf(stderr, "Unsupported hash type: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            default:
+                fprintf(stderr, "Usage: %s [-c] [-h hash] file\n", argv[0]);
+                return 1;
+        }
+    }
+
+    if (optind >= argc) {
+        fprintf(stderr, "Expected filename\n");
+        return 1;
+    }
+
+    filename = argv[optind];
+
+    // Initialize OpenSSL
+    OpenSSL_add_all_digests();
+
+    if (handle_tar(filename, color_flag, md) != 0) {
+        int ncid;
+        if (nc_open(filename, NC_NOWRITE, &ncid) == NC_NOERR) {
+            handle_ncfile(ncid, filename, color_flag, md);
+            if (nc_close(ncid) != NC_NOERR) {
+                fprintf(stderr, "Failed to close file: %s\n", filename);
+            }
+        }
+    }
 
     return 0;
 }

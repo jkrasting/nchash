@@ -1,6 +1,6 @@
 package:
   name: nchash
-  version: 1.1
+  version: 1.5
 
 source:
   path: ../
@@ -8,9 +8,12 @@ source:
 requirements:
   build:
     - clang
+  host:
+    - libarchive
     - openssl
     - libnetcdf
   run:
+    - libarchive
     - openssl
     - libnetcdf
 
