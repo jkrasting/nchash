@@ -19,7 +19,7 @@ make install
 If you are using libraries from Anaconda, the recommendation is to use the shared libraries from
 the conda environment. Use the following options to `./configure`:
 ```
-./configure CFLAGS=-I/${CONDA_PREFIX}/include LDFLAGS=-L/${CONDA_PREFIX}/lib
+./configure CFLAGS=-I/${CONDA_PREFIX}/include LDFLAGS="-L/${CONDA_PREFIX}/lib -Wl,-rpath,$CONDA_PREFIX/lib"
 ```
 
 ## Usage Instructions
