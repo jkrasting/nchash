@@ -2,7 +2,8 @@
   A C-utility for hashing NetCDF variables
 
   Dependencies
-  * C compiler
+  * C compiler (clang for MacOS)
+  * libarchive
   * libnetcdf
   * libcrypto
   
@@ -25,23 +26,24 @@ the conda environment. Use the following options to `./configure`:
 ## Usage Instructions
 
 ```
-nchash <options> file.nc
+nchash <options> file
 
 Options:
 -c     Colorized output
--a     Hash algorithm.  `m`=MD5, `s`=SHA-1, `2`=SHA-2 (default)
+-h     Hash algorithm 'md5', 'sha1', or 'sha256' (default)
+file   Either a NetCDF file or a tar file that contains multiple NetCDF files
 ```
 
 ## Example
 ```
-nchash -a m ~/app/ocean_hgrid.nc
-ocean_hgrid.nc: tile       93fa583c304560eb25b156a9f7368c70
-ocean_hgrid.nc: y          f5871dbc20503e25f612a4aeb22da671
-ocean_hgrid.nc: x          1f3658df001d9e486db46da74ac4f10b
-ocean_hgrid.nc: dy         7d2e042a6ce777d705cef146ff88940f
-ocean_hgrid.nc: dx         77042199cf81d8a41ffcf3728a9e553d
-ocean_hgrid.nc: area       590755f3a702a31600338d700c55c91f
-ocean_hgrid.nc: angle_dx   6467debe279e2d91a6e22c0eb93c715a
+nchash -h md5 ocean_hgrid.nc
+ocean_hgrid.nc tile: 93fa583c304560eb25b156a9f7368c70
+ocean_hgrid.nc y: 88ee0026c1e6315441c63fe6e7772199
+ocean_hgrid.nc x: 0d4bd34bb1afd4346fd4a9e80bea354a
+ocean_hgrid.nc dy: 5a8fe9eedc30d99a6b745e02e7b5b6c3
+ocean_hgrid.nc dx: 813f488487ca2308fe370588d5b38f45
+ocean_hgrid.nc area: f1797c67c6af7d1334689f6e14dda51a
+ocean_hgrid.nc angle_dx: 2ca36fcbdede94f70b0a8371e97fe98f
 ```
 
 ## To-Do
